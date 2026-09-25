@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MOU Dispatch Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root{
+    --ink:#182229; --paper:#EEF1EF; --panel:#FFFFFF; --line:#D7DEDA;
+    --teal:#2F6F5E; --teal-soft:#DCEAE5; --amber:#C97D2E; --amber-soft:#F5E4CE;
+    --rust:#B4462E; --rust-soft:#F3DAD3; --muted:#5C6B66;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:'IBM Plex Sans',Arial,sans-serif;}
+  .wrap{max-width:1180px;margin:0 auto;padding:32px 24px 64px;}
+  header{display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px;border-bottom:2px solid var(--ink);padding-bottom:16px;margin-bottom:20px;}
+  h1{font-size:1.5rem;margin:0;font-weight:700;letter-spacing:-0.01em;}
+  .sub{color:var(--muted);font-size:0.85rem;margin-top:4px;}
+  .meta{text-align:right;font-family:'IBM Plex Mono',monospace;font-size:0.75rem;color:var(--muted);}
+  button#refresh{font-family:'IBM Plex Mono',monospace;font-size:0.75rem;background:var(--ink);color:#fff;border:none;padding:7px 14px;border-radius:3px;cursor:pointer;margin-top:6px;}
+  button#refresh:hover{background:var(--teal);}
+  .toolbar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:28px;}
+  .tabs{display:flex;gap:4px;}
+  .tab-btn{font-family:'IBM Plex Sans',sans-serif;font-size:0.85rem;font-weight:600;background:none;border:1px solid var(--line);color:var(--muted);padding:8px 16px;border-radius:3px;cursor:pointer;}
+  .tab-btn.active{background:var(--ink);color:#fff;border-color:var(--ink);}
+  .filters{display:flex;gap:10px;align-items:center;}
+  .filters label{font-size:0.72rem;color:var(--muted);font-family:'IBM Plex Mono',monospace;margin-right:4px;}
+  .filters select{font-family:'IBM Plex Sans',sans-serif;font-size:0.82rem;padding:6px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;color:var(--ink);}
+  .view{display:none;}
+  .view.active{display:block;}
+  section{margin-bottom:36px;}
+  h2{font-size:0.95rem;text-transform:none;font-weight:600;margin:0 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line);}
+  .kpi-row{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:16px;}
+  .kpi .grade{font-family:'IBM Plex Mono',monospace;font-size:0.7rem;color:var(--muted);}
+  .kpi .achv{font-size:1.7rem;font-weight:700;margin:4px 0 2px;}
+  .kpi .figs{font-size:0.78rem;color:var(--muted);}
+  .kpi.overall{background:var(--ink);color:#fff;}
+  .kpi.overall .grade,.kpi.overall .figs{color:#B9C4BE;}
+  .chart-row{display:grid;grid-template-columns:1.1fr 1fr;gap:16px;}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:16px;}
+  .panel canvas{max-height:260px;}
+  .table-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  table{width:100%;border-collapse:collapse;font-size:0.85rem;}
+  th{text-align:left;font-weight:600;font-size:0.72rem;color:var(--muted);border-bottom:1px solid var(--line);padding:6px 4px;}
+  th.sortable{cursor:pointer;user-select:none;}
+  th.sortable:hover{color:var(--ink);}
+  th.sortable .arrow{font-size:0.65rem;margin-left:3px;}
+  td{padding:6px 4px;border-bottom:1px solid var(--line);}
+  td.num{text-align:right;font-family:'IBM Plex Mono',monospace;}
+  .pill{display:inline-block;padding:1px 7px;border-radius:10px;font-family:'IBM Plex Mono',monospace;font-size:0.72rem;}
+  .pill.good{background:var(--teal-soft);color:var(--teal);}
+  .pill.warn{background:var(--amber-soft);color:var(--amber);}
+  .pill.bad{background:var(--rust-soft);color:var(--rust);}
+  .pill.neutral{background:#E7E9E8;color:var(--muted);}
+  .dq-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .dq-item{display:flex;justify-content:space-between;padding:6px 4px;border-bottom:1px solid var(--line);font-size:0.85rem;}
+  .dq-item .name{font-weight:500;}
+  .dq-item .tag{font-family:'IBM Plex Mono',monospace;font-size:0.72rem;color:var(--muted);}
+  .empty-note{color:var(--muted);font-size:0.85rem;font-style:italic;padding:8px 4px;}
+  .more-note{color:var(--muted);font-size:0.75rem;padding-top:6px;}
+  .err{background:var(--rust-soft);color:var(--rust);border:1px solid var(--rust);border-radius:4px;padding:14px;font-size:0.85rem;}
+  .loading{color:var(--muted);padding:40px 0;text-align:center;}
+  .search-box{margin-bottom:12px;}
+  .search-box input{width:100%;max-width:320px;font-family:'IBM Plex Sans',sans-serif;font-size:0.85rem;padding:7px 10px;border:1px solid var(--line);border-radius:3px;}
+  .count-note{color:var(--muted);font-size:0.78rem;margin-bottom:10px;}
+  @media (max-width:800px){
+    .kpi-row{grid-template-columns:repeat(2,1fr);}
+    .chart-row,.table-row,.dq-row{grid-template-columns:1fr;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>MOU Dispatch Dashboard</h1>
+      <div class="sub">Live from Google Sheet via gviz &middot; PP / HDLL / LDPE / PVC</div>
+    </div>
+    <div class="meta">
+      <div id="updated">loading&hellip;</div>
+      <button id="refresh" onclick="loadAll()">Refresh data</button>
+    </div>
+  </header>
+  <div class="toolbar">
+    <div class="tabs">
+      <button class="tab-btn active" id="tabBtnDashboard" onclick="switchTab('dashboard')">Dashboard</button>
+      <button class="tab-btn" id="tabBtnCustomers" onclick="switchTab('customers')">All Customers</button>
+    </div>
+    <div class="filters">
+      <label>MONTH</label>
+      <select id="monthFilter" onchange="renderCurrentView()"><option value="ALL">All months</option></select>
+      <label>CUSTOMER</label>
+      <select id="customerFilter" onchange="renderCurrentView()"><option value="ALL">All customers</option></select>
+    </div>
+  </div>
+  <div id="app"><div class="loading">Loading live sheet data&hellip;</div></div>
+</div>
+
+<script>
+const SHEET_ID = '1zzDCuyuNP-V1tnpiYmybNhmmjtnKQo1Gc30dOB5DSZQ';
+const GRADES = ['PP','HDLL','LDPE','PVC'];
+const MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+
+let DATA = null;        // cached, parsed sheet data (fetched once)
+let currentTab = 'dashboard';
+let custSort = { col: 'actual', dir: -1 };
+
+function gvizUrl(sheet){
+  return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheet)}`;
+}
+async function fetchSheet(name){
+  const res = await fetch(gvizUrl(name));
+  if(!res.ok) throw new Error(`Could not read tab "${name}" (HTTP ${res.status}). Check sharing is set to "Anyone with the link".`);
+  const text = await res.text();
+  const start = text.indexOf('{'), end = text.lastIndexOf('}');
+  const json = JSON.parse(text.substring(start, end+1));
+  if(json.status === 'error') throw new Error(`gviz error reading "${name}": ` + (json.errors && json.errors[0] && json.errors[0].detailed_message));
+  return (json.table.rows || []).map(r => (r.c || []).map(c => c ? c.v : null));
+}
+function norm(s){
+  let t = String(s==null?'':s).toUpperCase().trim();
+  t = t.replace(/[.\-\s]+$/,'').trim();
+  return t.replace(/\s+/g,' ');
+}
+const val = (r,i) => (r[i]===undefined||r[i]===null) ? '' : r[i];
+const num = (r,i) => { const n = Number(val(r,i)); return isNaN(n) ? 0 : n; };
+
+// gviz returns date-typed cells as the string "Date(y,m,d,...)" - parse regardless of
+// whether the underlying cell is a real Date or a date-formatted text value.
+function parseGvizDate(v){
+  if(v===null || v===undefined) return null;
+  const s = String(v);
+  const m = s.match(/^Date\((\d+),(\d+),(\d+)/);
+  if(m) return new Date(Number(m[1]), Number(m[2]), Number(m[3]));
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+function monthKeyOf(d){ return d ? d.getFullYear()*12 + d.getMonth() : null; }
+function monthLabelOf(d){ return d ? MONTHS[d.getMonth()] + "'" + String(d.getFullYear()).slice(-2) : 'UNKNOWN'; }
+
+function findBlock(rows, marker){
+  let markerIdx = -1;
+  for(let i=0;i<rows.length;i++){
+    const v = norm(rows[i][0]);
+    if(v.indexOf(marker.toUpperCase()) === 0){ markerIdx = i; break; }
+  }
+  if(markerIdx === -1) return [];
+  const names = [];
+  let i = markerIdx + 2;
+  while(i < rows.length){
+    const v = norm(rows[i][0]);
+    if(v === '') break;
+    if(v.indexOf('HDLL')===0 || v.indexOf('LDPE')===0) break;
+    names.push(rows[i][0]);
+    i++;
+  }
+  return names;
+}
+function singleBlockNames(rows){
+  const names = [];
+  for(let i=7;i<rows.length;i++){
+    if(rows[i][0]) names.push(rows[i][0]);
+  }
+  return names;
+}
+
+function ensureChartLoaded(){
+  return new Promise((resolve, reject) => {
+    if (typeof Chart !== 'undefined') return resolve();
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js';
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('Could not load the Chart.js library from either CDN. Check your network/ad-blocker.'));
+    document.head.appendChild(s);
+  });
+}
+
+async function loadAll(){
+  const app = document.getElementById('app');
+  app.innerHTML = '<div class="loading">Loading live sheet data&hellip;</div>';
+  try{
+    await ensureChartLoaded();
+    const [mouRaw, dispatchRaw, aliasRaw, ppRaw, peRaw, pvcRaw, mwRaw] = await Promise.all([
+      fetchSheet('MOU_Master'), fetchSheet('Dispatch_Log'), fetchSheet('Aliases'),
+      fetchSheet('MASTERS PP'), fetchSheet('MASTERS PE'), fetchSheet('MASTERS PVC'), fetchSheet('Month_wise')
+    ]);
+
+    const aliasMap = {};
+    aliasRaw.slice(1).forEach(r => { const raw = val(r,0), canon = val(r,1); if(raw && canon) aliasMap[norm(raw)] = String(canon).trim(); });
+    const resolve = name => aliasMap[norm(name)] || name;
+
+    const mou = mouRaw.slice(1)
+      .map(r => ({ name: String(val(r,0)).trim(), grade: String(val(r,1)).trim().toUpperCase(), qty: num(r,4),
+                    inMou: String(val(r,6)).trim().toUpperCase(), inDispatch: String(val(r,7)).trim().toUpperCase() }))
+      .filter(m => m.name && m.grade);
+
+    const dispatch = dispatchRaw.slice(1).map(r => {
+      const d = parseGvizDate(val(r,0));
+      return {
+        customer: String(val(r,1)).trim(),
+        grade: String(val(r,2)).trim().toUpperCase(),
+        qty: num(r,5),
+        monthKey: monthKeyOf(d),
+        monthLabel: monthLabelOf(d)
+      };
+    }).filter(d => d.customer && d.grade);
+
+    const nameSet = new Set();
+    mou.forEach(m => nameSet.add(norm(m.name)));
+    mwRaw.slice(1).forEach(r => { if(val(r,0)) nameSet.add(norm(val(r,0))); });
+    singleBlockNames(ppRaw).forEach(n => nameSet.add(norm(n)));
+    singleBlockNames(pvcRaw).forEach(n => nameSet.add(norm(n)));
+    findBlock(peRaw,'HDLL').forEach(n => nameSet.add(norm(n)));
+    findBlock(peRaw,'LDPE').forEach(n => nameSet.add(norm(n)));
+
+    const monthlyTargetMap = {}; // grade|normname -> Monthly MOU (6.5%) from Month_wise
+    mwRaw.slice(1).forEach(r => {
+      const name = String(val(r,0)).trim();
+      const grade = String(val(r,1)).trim().toUpperCase();
+      const monthlyTarget = num(r,3); // column D: "Monthly MOU (6.5%)"
+      if(name && grade) monthlyTargetMap[grade+'|'+norm(name)] = monthlyTarget;
+    });
+
+    DATA = { mou, dispatch, resolve, nameSet, monthlyTargetMap };
+
+    populateFilters();
+    renderCurrentView();
+    document.getElementById('updated').textContent = 'Data pulled: ' + new Date().toLocaleString();
+  } catch(err){
+    app.innerHTML = `<div class="err"><strong>Could not load data.</strong><br>${err.message}<br><br>
+      Make sure the spreadsheet is shared as "Anyone with the link &ndash; Viewer".</div>`;
+    document.getElementById('updated').textContent = 'Load failed';
+  }
+}
+
+function populateFilters(){
+  const monthMap = new Map();
+  DATA.dispatch.forEach(d => { if(d.monthKey!==null) monthMap.set(d.monthKey, d.monthLabel); });
+  const monthKeys = [...monthMap.keys()].sort((a,b)=>a-b);
+  const monthSel = document.getElementById('monthFilter');
+  monthSel.innerHTML = '<option value="ALL">All months</option>' +
+    monthKeys.map(k => `<option value="${k}">${monthMap.get(k)}</option>`).join('');
+
+  const custSet = new Set();
+  DATA.mou.forEach(m => custSet.add(m.name));
+  DATA.dispatch.forEach(d => custSet.add(DATA.resolve(d.customer)));
+  const custList = [...custSet].sort((a,b)=>a.localeCompare(b));
+  const custSel = document.getElementById('customerFilter');
+  custSel.innerHTML = '<option value="ALL">All customers</option>' +
+    custList.map(c => `<option value="${c.replace(/"/g,'&quot;')}">${c}</option>`).join('');
+}
+
+function switchTab(tab){
+  currentTab = tab;
+  document.getElementById('tabBtnDashboard').classList.toggle('active', tab==='dashboard');
+  document.getElementById('tabBtnCustomers').classList.toggle('active', tab==='customers');
+  renderCurrentView();
+}
+
+function getFilteredDispatch(){
+  const monthF = document.getElementById('monthFilter').value;
+  const custF = document.getElementById('customerFilter').value;
+  return DATA.dispatch.filter(d => {
+    if(monthF !== 'ALL' && String(d.monthKey) !== monthF) return false;
+    if(custF !== 'ALL' && norm(DATA.resolve(d.customer)) !== norm(custF)) return false;
+    return true;
+  });
+}
+function getFilteredMou(){
+  const custF = document.getElementById('customerFilter').value;
+  return DATA.mou.filter(m => custF === 'ALL' || norm(m.name) === norm(custF));
+}
+
+function renderCurrentView(){
+  if(!DATA) return;
+  if(currentTab === 'dashboard') renderDashboard(); else renderCustomers();
+}
+
+function achvPill(a){
+  if(a===null) return '<span class="pill neutral">no target</span>';
+  const cls = a>=100 ? 'good' : (a>=70 ? 'warn' : 'bad');
+  return `<span class="pill ${cls}">${a.toFixed(0)}%</span>`;
+}
+function fmt(n){ return Number(n).toLocaleString(undefined,{maximumFractionDigits:1}); }
+
+function renderDashboard(){
+  const dispatch = getFilteredDispatch();
+  const mou = getFilteredMou();
+  const resolve = DATA.resolve;
+
+  const targetByGrade = {}, actualByGrade = {};
+  GRADES.forEach(g => { targetByGrade[g]=0; actualByGrade[g]=0; });
+  mou.forEach(m => { if(targetByGrade[m.grade]!==undefined) targetByGrade[m.grade]+=m.qty; });
+  dispatch.forEach(d => { if(actualByGrade[d.grade]!==undefined) actualByGrade[d.grade]+=d.qty; });
+
+  const monthTotals = {}, monthLabelByKey = {};
+  dispatch.forEach(d => {
+    if(d.monthKey===null) return;
+    monthTotals[d.monthKey] = (monthTotals[d.monthKey]||0) + d.qty;
+    monthLabelByKey[d.monthKey] = d.monthLabel;
+  });
+  const monthKeys = Object.keys(monthTotals).map(Number).sort((a,b)=>a-b);
+
+  const custActual = {};
+  dispatch.forEach(d => {
+    const resolved = resolve(d.customer);
+    const key = d.grade + '|' + norm(resolved);
+    if(!custActual[key]) custActual[key] = { name: resolved, grade: d.grade, qty: 0 };
+    custActual[key].qty += d.qty;
+  });
+  const ranked = mou.map(m => {
+    const key = m.grade + '|' + norm(m.name);
+    const actual = custActual[key] ? custActual[key].qty : 0;
+    const achv = m.qty > 0 ? (actual / m.qty) * 100 : null;
+    return { name: m.name, grade: m.grade, target: m.qty, actual, achv };
+  }).filter(r => r.target > 0);
+  const top5 = [...ranked].sort((a,b)=>b.achv-a.achv).slice(0,5);
+  const bottom5 = [...ranked].sort((a,b)=>a.achv-b.achv).slice(0,5);
+
+  const mouNoDispatch = mou.filter(m => !custActual[m.grade+'|'+norm(m.name)]).sort((a,b)=>b.qty-a.qty);
+
+  const orphanGroups = {};
+  dispatch.forEach(d => {
+    const resolvedNorm = norm(resolve(d.customer));
+    if(!DATA.nameSet.has(resolvedNorm)){
+      const key = d.grade + '|' + resolvedNorm;
+      if(!orphanGroups[key]) orphanGroups[key] = { name: d.customer, grade: d.grade, count: 0 };
+      orphanGroups[key].count++;
+    }
+  });
+  const orphans = Object.values(orphanGroups).sort((a,b)=>b.count-a.count);
+
+  const totalTarget = Object.values(targetByGrade).reduce((a,b)=>a+b,0);
+  const totalActual = Object.values(actualByGrade).reduce((a,b)=>a+b,0);
+  const overallAchv = totalTarget ? (totalActual/totalTarget*100) : 0;
+
+  const kpiCards = GRADES.map(g => {
+    const t = targetByGrade[g], a = actualByGrade[g];
+    const achv = t ? (a/t*100) : 0;
+    return `<div class="kpi"><div class="grade">${g}</div><div class="achv">${achv.toFixed(0)}%</div><div class="figs">${fmt(a)} / ${fmt(t)} MT</div></div>`;
+  }).join('') + `<div class="kpi overall"><div class="grade">OVERALL</div><div class="achv">${overallAchv.toFixed(0)}%</div><div class="figs">${fmt(totalActual)} / ${fmt(totalTarget)} MT</div></div>`;
+
+  document.getElementById('app').innerHTML = `
+    <div class="view active">
+      <section><h2>Achievement by grade</h2><div class="kpi-row">${kpiCards}</div></section>
+      <section><div class="chart-row">
+        <div class="panel"><h2 style="border:none;margin-bottom:6px;">Target vs Actual (MT)</h2><canvas id="barChart"></canvas></div>
+        <div class="panel"><h2 style="border:none;margin-bottom:6px;">Monthly dispatch trend</h2><canvas id="lineChart"></canvas></div>
+      </div></section>
+      <section><h2>Customer performance vs MOU</h2><div class="table-row">
+        <div class="panel"><strong style="font-size:0.85rem;">Top 5 achievers</strong>${customerTable(top5)}</div>
+        <div class="panel"><strong style="font-size:0.85rem;">Lowest 5 achievers</strong>${customerTable(bottom5)}</div>
+      </div></section>
+      <section><h2>Data quality</h2><div class="dq-row">
+        <div class="panel"><strong style="font-size:0.85rem;">MOU customers with zero dispatch (${mouNoDispatch.length})</strong>
+          ${dqList(mouNoDispatch.slice(0,15), m => `${m.name} <span class="tag">(${m.grade})</span>`, m => fmt(m.qty)+' MT MOU')}
+          ${mouNoDispatch.length>15 ? `<div class="more-note">+ ${mouNoDispatch.length-15} more</div>` : ''}
+        </div>
+        <div class="panel"><strong style="font-size:0.85rem;">Dispatch names missing from every other tab (${orphans.length})</strong>
+          ${dqList(orphans.slice(0,15), o => `${o.name} <span class="tag">(${o.grade})</span>`, o => o.count+' row(s)')}
+          ${orphans.length>15 ? `<div class="more-note">+ ${orphans.length-15} more</div>` : ''}
+        </div>
+      </div></section>
+    </div>`;
+
+  new Chart(document.getElementById('barChart'), {
+    type: 'bar',
+    data: { labels: GRADES, datasets: [
+      { label: 'Target', data: GRADES.map(g=>targetByGrade[g]), backgroundColor: '#B9C4BE' },
+      { label: 'Actual', data: GRADES.map(g=>actualByGrade[g]), backgroundColor: '#2F6F5E' }
+    ]},
+    options: { responsive:true, plugins:{legend:{position:'bottom'}}, scales:{y:{beginAtZero:true}} }
+  });
+  new Chart(document.getElementById('lineChart'), {
+    type: 'line',
+    data: { labels: monthKeys.map(k=>monthLabelByKey[k]), datasets: [
+      { label:'Total dispatch (MT)', data: monthKeys.map(k=>monthTotals[k]), borderColor:'#C97D2E', backgroundColor:'#F5E4CE', fill:true, tension:0.25 }
+    ]},
+    options: { responsive:true, plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true}} }
+  });
+}
+
+function customerTable(rows){
+  if(rows.length===0) return '<div class="empty-note">No data.</div>';
+  return `<table><thead><tr><th>Customer</th><th>Grade</th><th style="text-align:right">Actual</th><th style="text-align:right">MOU</th><th>Achv.</th></tr></thead><tbody>
+    ${rows.map(r=>`<tr><td>${r.name}</td><td>${r.grade}</td><td class="num">${fmt(r.actual)}</td><td class="num">${fmt(r.target)}</td><td>${achvPill(r.achv)}</td></tr>`).join('')}
+  </tbody></table>`;
+}
+function dqList(items, nameFn, tagFn){
+  if(items.length===0) return '<div class="empty-note">None found.</div>';
+  return items.map(i => `<div class="dq-item"><span class="name">${nameFn(i)}</span><span class="tag">${tagFn(i)}</span></div>`).join('');
+}
+
+function periodMonthCount(){
+  // How many months the current view represents: 1 if a specific month is picked,
+  // otherwise the number of distinct months seen anywhere in Dispatch_Log so far.
+  const monthFilterVal = document.getElementById('monthFilter').value;
+  if(monthFilterVal !== 'ALL') return 1;
+  const monthSet = new Set(DATA.dispatch.map(d => d.monthKey).filter(k => k !== null));
+  return monthSet.size || 1;
+}
+
+function buildCustomerRows(){
+  const dispatch = getFilteredDispatch();
+  const resolve = DATA.resolve;
+  const months = periodMonthCount();
+  const rowMap = {};
+  DATA.mou.forEach(m => {
+    const key = m.grade + '|' + norm(m.name);
+    const monthlyBase = DATA.monthlyTargetMap[key] !== undefined ? DATA.monthlyTargetMap[key] : (m.qty / 12);
+    rowMap[key] = { name: m.name, grade: m.grade, target: monthlyBase * months, actual: 0, inMou: m.inMou==='Y', inDispatch: false };
+  });
+  dispatch.forEach(d => {
+    const resolved = resolve(d.customer);
+    const key = d.grade + '|' + norm(resolved);
+    if(!rowMap[key]) rowMap[key] = { name: resolved, grade: d.grade, target: 0, actual: 0, inMou: false, inDispatch: false };
+    rowMap[key].actual += d.qty;
+    rowMap[key].inDispatch = true;
+  });
+  return Object.values(rowMap).map(r => ({ ...r, achv: r.target>0 ? (r.actual/r.target*100) : null }));
+}
+
+function renderCustomers(){
+  const custF = document.getElementById('customerFilter').value;
+  let rows = buildCustomerRows();
+  if(custF !== 'ALL') rows = rows.filter(r => norm(r.name) === norm(custF));
+
+  document.getElementById('app').innerHTML = `
+    <div class="view active">
+      <section>
+        <h2>All customers</h2>
+        <div class="search-box"><input type="text" id="custSearch" placeholder="Search customer name&hellip;" oninput="filterCustomerTable()"></div>
+        <div class="count-note" id="custCount"></div>
+        <div class="count-note">Target = Monthly MOU (6.5%) from Month_wise, scaled to the number of months in the current filter (falls back to Annual MOU &divide; 12 if a customer has no Month_wise row).</div>
+        <div class="panel"><table id="custTable"><thead>
+          <tr>
+            <th class="sortable" onclick="sortCustTable('name')">Customer <span class="arrow"></span></th>
+            <th class="sortable" onclick="sortCustTable('grade')">Grade <span class="arrow"></span></th>
+            <th class="sortable" onclick="sortCustTable('target')" style="text-align:right">Monthly Target <span class="arrow"></span></th>
+            <th class="sortable" onclick="sortCustTable('actual')" style="text-align:right">Actual <span class="arrow"></span></th>
+            <th class="sortable" onclick="sortCustTable('achv')">Achv. <span class="arrow"></span></th>
+            <th>In MOU?</th>
+            <th>Has Dispatch?</th>
+          </tr>
+        </thead><tbody id="custTableBody"></tbody></table></div>
+      </section>
+    </div>`;
+
+  window._custRows = rows;
+  paintCustomerTable();
+}
+
+function paintCustomerTable(){
+  let rows = window._custRows.slice();
+  const q = (document.getElementById('custSearch') && document.getElementById('custSearch').value || '').trim().toUpperCase();
+  if(q) rows = rows.filter(r => r.name.toUpperCase().indexOf(q) !== -1);
+
+  const { col, dir } = custSort;
+  rows.sort((a,b) => {
+    let av = a[col], bv = b[col];
+    if(col==='achv'){ av = av===null ? -1 : av; bv = bv===null ? -1 : bv; }
+    if(typeof av === 'string') return av.localeCompare(bv) * dir;
+    return ((av||0) - (bv||0)) * dir;
+  });
+
+  document.getElementById('custCount').textContent = `${rows.length} customer(s)`;
+  document.getElementById('custTableBody').innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.name}</td>
+      <td>${r.grade}</td>
+      <td class="num">${fmt(r.target)}</td>
+      <td class="num">${fmt(r.actual)}</td>
+      <td>${achvPill(r.achv)}</td>
+      <td>${r.inMou ? '<span class="pill good">Y</span>' : '<span class="pill bad">N</span>'}</td>
+      <td>${r.inDispatch ? '<span class="pill good">Y</span>' : '<span class="pill bad">N</span>'}</td>
+    </tr>`).join('') || '<tr><td colspan="7" class="empty-note">No matching customers.</td></tr>';
+}
+function filterCustomerTable(){ paintCustomerTable(); }
+function sortCustTable(col){
+  custSort.dir = (custSort.col === col) ? -custSort.dir : -1;
+  custSort.col = col;
+  paintCustomerTable();
+}
+
+loadAll();
+</script>
+</body>
+</html>
