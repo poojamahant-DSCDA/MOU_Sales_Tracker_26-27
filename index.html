@@ -78,7 +78,7 @@
   <header>
     <div>
       <h1>MOU Dispatch Dashboard</h1>
-      <div class="sub">Live from Google Sheet  &middot; PP / HDLL / LDPE / PVC</div>
+      <div class="sub">Live from Google Sheet via gviz &middot; PP / HDLL / LDPE / PVC</div>
     </div>
     <div class="meta">
       <div id="updated">loading&hellip;</div>
@@ -287,14 +287,20 @@ function achvPill(a){
 }
 function fmt(n){ return Number(n).toLocaleString(undefined,{maximumFractionDigits:1}); }
 
+function monthlyTargetFor(m){
+  const key = m.grade + '|' + norm(m.name);
+  return DATA.monthlyTargetMap[key] !== undefined ? DATA.monthlyTargetMap[key] : (m.qty / 12);
+}
+
 function renderDashboard(){
   const dispatch = getFilteredDispatch();
   const mou = getFilteredMou();
   const resolve = DATA.resolve;
+  const months = periodMonthCount();
 
   const targetByGrade = {}, actualByGrade = {};
   GRADES.forEach(g => { targetByGrade[g]=0; actualByGrade[g]=0; });
-  mou.forEach(m => { if(targetByGrade[m.grade]!==undefined) targetByGrade[m.grade]+=m.qty; });
+  mou.forEach(m => { if(targetByGrade[m.grade]!==undefined) targetByGrade[m.grade] += monthlyTargetFor(m) * months; });
   dispatch.forEach(d => { if(actualByGrade[d.grade]!==undefined) actualByGrade[d.grade]+=d.qty; });
 
   const monthTotals = {}, monthLabelByKey = {};
@@ -315,13 +321,16 @@ function renderDashboard(){
   const ranked = mou.map(m => {
     const key = m.grade + '|' + norm(m.name);
     const actual = custActual[key] ? custActual[key].qty : 0;
-    const achv = m.qty > 0 ? (actual / m.qty) * 100 : null;
-    return { name: m.name, grade: m.grade, target: m.qty, actual, achv };
+    const target = monthlyTargetFor(m) * months;
+    const achv = target > 0 ? (actual / target) * 100 : null;
+    return { name: m.name, grade: m.grade, target, actual, achv };
   }).filter(r => r.target > 0);
   const top5 = [...ranked].sort((a,b)=>b.achv-a.achv).slice(0,5);
   const bottom5 = [...ranked].sort((a,b)=>a.achv-b.achv).slice(0,5);
 
-  const mouNoDispatch = mou.filter(m => !custActual[m.grade+'|'+norm(m.name)]).sort((a,b)=>b.qty-a.qty);
+  const mouNoDispatch = mou.filter(m => !custActual[m.grade+'|'+norm(m.name)])
+    .map(m => ({ name: m.name, grade: m.grade, qty: monthlyTargetFor(m) * months }))
+    .sort((a,b)=>b.qty-a.qty);
 
   const orphanGroups = {};
   dispatch.forEach(d => {
@@ -346,7 +355,9 @@ function renderDashboard(){
 
   document.getElementById('app').innerHTML = `
     <div class="view active">
-      <section><h2>Achievement by grade</h2><div class="kpi-row">${kpiCards}</div></section>
+      <section><h2>Achievement by grade</h2>
+        <div class="count-note">Target = Monthly MOU (6.5%) from Month_wise, scaled to ${months} month(s) in the current filter.</div>
+        <div class="kpi-row">${kpiCards}</div></section>
       <section><div class="chart-row">
         <div class="panel"><h2 style="border:none;margin-bottom:6px;">Target vs Actual (MT)</h2><canvas id="barChart"></canvas></div>
         <div class="panel"><h2 style="border:none;margin-bottom:6px;">Monthly dispatch trend</h2><canvas id="lineChart"></canvas></div>
@@ -357,7 +368,7 @@ function renderDashboard(){
       </div></section>
       <section><h2>Data quality</h2><div class="dq-row">
         <div class="panel"><strong style="font-size:0.85rem;">MOU customers with zero dispatch (${mouNoDispatch.length})</strong>
-          ${dqList(mouNoDispatch.slice(0,15), m => `${m.name} <span class="tag">(${m.grade})</span>`, m => fmt(m.qty)+' MT MOU')}
+          ${dqList(mouNoDispatch.slice(0,15), m => `${m.name} <span class="tag">(${m.grade})</span>`, m => fmt(m.qty)+' MT target')}
           ${mouNoDispatch.length>15 ? `<div class="more-note">+ ${mouNoDispatch.length-15} more</div>` : ''}
         </div>
         <div class="panel"><strong style="font-size:0.85rem;">Dispatch names missing from every other tab (${orphans.length})</strong>
