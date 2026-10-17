@@ -124,7 +124,9 @@
         <select id="periodType" onchange="onPeriodTypeChange()">
           <option value="M">Monthly</option><option value="Q">Quarterly</option><option value="H">Half-yearly</option><option value="A">Annual</option>
         </select>
-        <select id="periodInst" onchange="renderCurrentView()"></select></div>
+        <select id="periodInst" onchange="renderCurrentView()"></select>
+        <label>PP SALE</label>
+        <select id="ppSale" onchange="renderCurrentView()"><option value="POST">Non-contract (post-GST)</option><option value="PRE">Contract (pre-GST)</option></select></div>
     </div>
   </div>
   <div id="app"><div class="loading">Loading live sheet data&hellip;</div></div>
@@ -211,31 +213,6 @@ function ensureChartLoaded(){
   });
 }
 
-/* ---------- discount slab sheet ("Discount_Slabs") ---------- */
-function periodTypeOf(text){
-  const t = String(text||'').toLowerCase().replace(/[^a-z]/g,'');
-  if(t.indexOf('month')===0) return 'M';
-  if(t.indexOf('quart')===0) return 'Q';
-  if(t.indexOf('half')===0) return 'H';
-  if(t.indexOf('annual')===0 || t.indexOf('year')===0) return 'A';
-  return null;
-}
-// Columns: Grade | Customer (blank = all) | Period | Slab name | From MT | Discount Rs per MT
-function parseSlabs(rows, resolve){
-  const out = [];
-  rows.forEach(r => {
-    const grade = String(val(r,0)).trim().toUpperCase();
-    const cust = String(val(r,1)).trim();
-    const ptype = periodTypeOf(val(r,2));
-    const fromRaw = val(r,4), rateRaw = val(r,5);
-    const from = Number(fromRaw), rate = Number(rateRaw);
-    if(!isGrade(grade) || !ptype || fromRaw==='' || rateRaw==='' || isNaN(from) || isNaN(rate)) return;
-    const isAll = !cust || cust==='*' || cust.toUpperCase()==='ALL';
-    out.push({ grade, custNorm: isAll ? '' : norm(resolve(cust)), ptype, name: String(val(r,3)).trim() || 'Slab', from, rate });
-  });
-  return out;
-}
-
 async function loadAll(silent){
   const app = document.getElementById('app');
   if(!silent) app.innerHTML = '<div class="loading">Loading live sheet data&hellip;</div>';
@@ -243,10 +220,9 @@ async function loadAll(silent){
     await ensureChartLoaded();
     Chart.defaults.font.family = "'Inter', sans-serif";
     Chart.defaults.color = '#5F7399';
-    const [mouRaw, dispatchRaw, aliasRaw, ppRaw, peRaw, pvcRaw, mwRaw, slabRaw] = await Promise.all([
+    const [mouRaw, dispatchRaw, aliasRaw, ppRaw, peRaw, pvcRaw, mwRaw] = await Promise.all([
       fetchSheet('MOU_Master'), fetchSheet('Dispatch_Log'), fetchSheet('Aliases'),
-      fetchSheet('MASTERS PP'), fetchSheet('MASTERS PE'), fetchSheet('MASTERS PVC'), fetchSheet('Month_wise'),
-      fetchSheet('Discount_Slabs').catch(() => [])
+      fetchSheet('MASTERS PP'), fetchSheet('MASTERS PE'), fetchSheet('MASTERS PVC'), fetchSheet('Month_wise')
     ]);
 
     const aliasMap = {};
@@ -292,7 +268,7 @@ async function loadAll(silent){
     let latestDate = null;
     dispatch.forEach(d => { if(d.date && (!latestDate || d.date > latestDate)) latestDate = d.date; });
 
-    DATA = { mou, dispatch, resolve, nameSet, monthlyTargetMap, latestDate, slabs: parseSlabs(slabRaw, resolve) };
+    DATA = { mou, dispatch, resolve, nameSet, monthlyTargetMap, latestDate };
 
     populateFilters();
     updateNotice();
@@ -545,6 +521,27 @@ function paintCustomerTable(){
 function sortCustTable(col){ custSort.dir = (custSort.col===col) ? -custSort.dir : -1; custSort.col = col; paintCustomerTable(); }
 
 /* ======================= DISCOUNT & LOSS TAB ======================= */
+// Rates and slabs below come from the DSCD scheme guides (PP, HDPE/LLDPE, LDPE, PVC).
+// If RIL or DSCD revise a scheme, edit the numbers here - nothing else needs to change.
+const RS = '\u20B9';
+// RIL MOU discount: min/max are shares of the ANNUAL MOU quantity; rate is Rs per MT.
+const MOU_STD = { M:{min:0.065,max:0.12,rate:700}, Q:{min:0.22,max:0.33,rate:0}, H:{min:0.44,max:0.66,rate:400}, A:{min:0.85,max:1.25,rate:400} };
+const MOU_PVC = { M:{min:0.07,max:0.10,rate:700},  Q:{min:0.21,max:0.30,rate:0}, H:{min:0.42,max:0.60,rate:400}, A:{min:0.82,max:1.20,rate:200} };
+const MIN_MTA = { PP:0, HDLL:60, LDPE:60, PVC:0 };   // minimum MOU signing quantity (HD/LLDPE/LD: 60 MTA)
+// DSCD quantity discount: [from MT per month, Rs per MT]
+const QD_SLABS = {
+  PP_POST:[[10,200],[21,300],[63,400],[126,500],[189,600],[280,675],[400,750],[550,825],[700,900]],
+  PP_PRE: [[10,169],[21,254],[63,339],[126,424],[189,508],[280,572],[400,636],[550,699],[700,763]],
+  HDLL:   [[5,450],[10,550],[30,650],[60,750],[100,850],[200,950],[300,1050],[400,1150]],
+  LDPE:   [[5,250],[10,350],[30,450],[60,550],[100,650],[200,725],[300,1000],[400,1250]],
+  PVC:    [[15,200],[50,300],[100,400],[200,500]]
+};
+const ruleFor = (grade, pt) => (grade==='PVC' ? MOU_PVC : MOU_STD)[pt];
+function qdSlabsFor(grade){
+  const key = grade==='PP' ? (document.getElementById('ppSale').value==='PRE' ? 'PP_PRE' : 'PP_POST') : grade;
+  return QD_SLABS[key].map(([from, rate]) => ({ from, rate, name: from + '+ MT' }));
+}
+
 // Financial year runs April-March. monthKey = year*12 + monthIndex(0-11).
 function periodOf(ptype, mk){
   const y = Math.floor(mk/12), m = mk % 12;
@@ -572,11 +569,6 @@ function populatePeriodOptions(){
 }
 function onPeriodTypeChange(){ populatePeriodOptions(); renderCurrentView(); }
 
-function slabsFor(grade, custNorm, ptype){
-  const all = DATA.slabs.filter(s => s.grade===grade && s.ptype===ptype);
-  const specific = all.filter(s => s.custNorm === custNorm);
-  return (specific.length ? specific : all.filter(s => s.custNorm === '')).sort((a,b) => a.from - b.from);
-}
 function evalSlab(slabs, vol){
   let cur = null, next = null;
   for(const s of slabs){ if(vol >= s.from) cur = s; else { next = s; break; } }
@@ -584,111 +576,188 @@ function evalSlab(slabs, vol){
   const uplift = next ? Math.max(0, next.from * next.rate - earned) : 0;
   return { cur, next, earned, need: next ? next.from - vol : 0, uplift };
 }
+
 function discountContext(){
   const g = gradeF(), c = custF(), resolve = DATA.resolve, map = {};
   DATA.mou.forEach(m => {
     if(g!=='ALL' && m.grade!==g) return;
     if(c!=='ALL' && norm(m.name)!==norm(c)) return;
-    map[m.grade+'|'+norm(m.name)] = { name: m.name, grade: m.grade, byMonth: {} };
+    map[m.grade+'|'+norm(m.name)] = { name: m.name, grade: m.grade, annual: m.qty, byMonth: {} };
   });
   DATA.dispatch.forEach(d => {
     if(g!=='ALL' && d.grade!==g) return;
     const res = resolve(d.customer);
     if(c!=='ALL' && norm(res)!==norm(c)) return;
     const key = d.grade+'|'+norm(res);
-    if(!map[key]) map[key] = { name: res, grade: d.grade, byMonth: {} };
+    if(!map[key]) map[key] = { name: res, grade: d.grade, annual: 0, byMonth: {} };
     if(d.monthKey!==null) map[key].byMonth[d.monthKey] = (map[key].byMonth[d.monthKey]||0) + d.qty;
   });
   return Object.values(map);
 }
-function computeRows(ptype, p, ctx){
-  const status = periodStatus(p), rows = [];
+
+// One row per customer for one MOU component (Monthly / Quarterly / Half-yearly / Annual) in one period.
+function computeMouRows(pt, p, ctx){
+  const st = periodStatus(p), rows = [];
   ctx.forEach(c => {
-    const slabs = slabsFor(c.grade, norm(c.name), ptype);
-    if(!slabs.length) return;
+    const rule = ruleFor(c.grade, pt);
     let vol = 0; for(let mk = p.start; mk <= p.end; mk++) vol += c.byMonth[mk] || 0;
-    const e = evalSlab(slabs, vol);
-    rows.push({ name: c.name, grade: c.grade, vol, cur: e.cur, next: e.next, need: e.need, earned: e.earned,
-      atRisk: status==='open' ? e.uplift : 0, forgone: status==='closed' ? e.uplift : 0, status });
+    const eligible = c.annual > 0 && c.annual >= MIN_MTA[c.grade];
+    const minQty = rule.min * c.annual, maxQty = rule.max * c.annual;
+    const qualified = eligible && vol >= minQty - 1e-9;
+    const short = eligible && !qualified;
+    const payVol = Math.min(vol, maxQty);
+    rows.push({ name: c.name, grade: c.grade, annual: c.annual, vol, minQty, maxQty, rate: rule.rate, eligible, qualified, short, st,
+      pct: c.annual > 0 ? vol / c.annual * 100 : null,
+      need: short && st==='open' ? minQty - vol : 0,
+      earned: qualified ? rule.rate * payVol : 0,
+      atRisk: short && st==='open' ? rule.rate * payVol : 0,
+      forgone: short && st==='closed' ? rule.rate * payVol : 0 });
   });
   return rows;
 }
 const sum = (rows, k) => rows.reduce((a,r) => a + (r[k]||0), 0);
+const pc = x => (+(x*100).toFixed(1)) + '%';
 
-function emptySlabNotice(){
-  return `<div class="view active"><section><div class="eyebrow">Setup needed</div><h2>Discount slabs not found</h2>
-    <div class="panel">
-      <p style="margin-top:0;font-size:0.9rem;line-height:1.6;">This view reads the slab rules from a tab named <b>Discount_Slabs</b> in the Google Sheet. It was not found (or has no valid rows), so there is nothing to calculate yet.</p>
-      <p style="font-size:0.88rem;">Add the tab with these columns in row 1, then one row per slab:</p>
-<pre class="fmt">Grade | Customer | Period    | Slab   | From MT | Discount Rs/MT
-PP    |          | Monthly   | Slab 1 | 100     | 250      &larr; format example only
-PP    |          | Monthly   | Slab 2 | 200     | 400      &larr; format example only</pre>
-      <div class="assume">Grade: PP / HDLL / LDPE / PVC. Customer: leave blank for all customers, or enter a name to give that customer its own slabs. Period: Monthly, Quarterly, Half-yearly or Annual. From MT: minimum volume in that period to qualify. Discount: Rs per MT. Then press Refresh data.</div>
-    </div></section></div>`;
+function ruleText(pt){
+  const g = gradeF(), s = MOU_STD[pt], v = MOU_PVC[pt];
+  const rate = r => r.rate ? `${RS}${r.rate}/MT` : `${RS}0/MT (no payout)`;
+  const std = `${rate(s)} &middot; ${pc(s.min)}&ndash;${pc(s.max)} of MOU`;
+  if(g==='PVC') return `${rate(v)} &middot; ${pc(v.min)}&ndash;${pc(v.max)} of MOU`;
+  if(g==='ALL') return std + ` <br>PVC: ${pc(v.min)}&ndash;${pc(v.max)}${v.rate!==s.rate ? ', ' + RS + v.rate + '/MT' : ''}`;
+  return std;
+}
+
+// Financial-year-to-date totals across all four MOU components, plus DSCD quantity discount.
+function fyTotals(ctx){
+  const t = todayMK(), fy = periodOf('A', t), out = { earned:0, atRisk:0, forgone:0, byType:{}, qd:0, noMouMT:0 };
+  Object.keys(PTYPES).forEach(pt => {
+    const agg = { earned:0, atRisk:0, forgone:0 }, seen = new Set();
+    for(let mk = fy.start; mk <= t; mk++){
+      const p = periodOf(pt, mk); if(seen.has(p.start)) continue; seen.add(p.start);
+      const rows = computeMouRows(pt, p, ctx);
+      agg.earned += sum(rows,'earned'); agg.atRisk += sum(rows,'atRisk'); agg.forgone += sum(rows,'forgone');
+    }
+    out.byType[pt] = agg; out.earned += agg.earned; out.atRisk += agg.atRisk; out.forgone += agg.forgone;
+  });
+  ctx.forEach(c => {
+    const slabs = qdSlabsFor(c.grade);
+    for(let mk = fy.start; mk <= t; mk++){
+      const v = c.byMonth[mk] || 0; if(v <= 0) continue;
+      out.qd += evalSlab(slabs, v).earned;
+      if(!c.annual) out.noMouMT += v;
+    }
+  });
+  return out;
+}
+
+function statusPill(r){
+  if(!r.eligible) return r.annual > 0 ? `<span class="pill neutral">Below ${MIN_MTA[r.grade]} MTA</span>` : '<span class="pill neutral">No MOU</span>';
+  if(r.qualified) return '<span class="pill good">Qualified</span>';
+  if(r.st==='open') return '<span class="pill warn">Short</span>';
+  return '<span class="pill bad">Missed</span>';
 }
 
 function renderDiscount(){
   const app = document.getElementById('app');
-  if(!DATA.slabs.length){ app.innerHTML = emptySlabNotice(); return; }
-
-  const ptype = document.getElementById('periodType').value;
-  const p = periodOf(ptype, Number(document.getElementById('periodInst').value) || todayMK());
-  const status = periodStatus(p), ctx = discountContext();
-  const rows = computeRows(ptype, p, ctx);
-
-  const earned = sum(rows,'earned'), atRisk = sum(rows,'atRisk'), forgone = sum(rows,'forgone');
-  const inSlab = rows.filter(r => r.cur).length;
-  const needRows = rows.filter(r => r.next && status==='open');
-  const statusPill = status==='open' ? '<span class="pill warn">running</span>' : (status==='closed' ? '<span class="pill neutral">closed</span>' : '<span class="pill neutral">not started</span>');
+  const pt = document.getElementById('periodType').value;
+  const p = periodOf(pt, Number(document.getElementById('periodInst').value) || todayMK());
+  const st = periodStatus(p), ctx = discountContext(), rows = computeMouRows(pt, p, ctx);
+  const elig = rows.filter(r => r.eligible), qual = elig.filter(r => r.qualified).length;
+  const earned = sum(rows,'earned'), atRisk = sum(rows,'atRisk'), forgone = sum(rows,'forgone'), needTotal = sum(rows,'need');
+  const statusPillHtml = st==='open' ? '<span class="pill warn">running</span>' : (st==='closed' ? '<span class="pill neutral">closed</span>' : '<span class="pill neutral">not started</span>');
+  const noPayout = !!(rows.length && rows.every(r => !r.rate));
 
   const kpis = `
-    <div class="kpi overall"><div class="grade">Discount earned</div><div class="achv">${inr(earned)}</div><div class="figs">${PTYPES[ptype]} &middot; ${p.label}</div></div>
-    <div class="kpi"><div class="grade">Discount at risk</div><div class="achv">${status==='open' ? inr(atRisk) : '&mdash;'}</div><div class="figs">${status==='open' ? 'next slab not yet secured' : 'only for a running period'}</div></div>
-    <div class="kpi"><div class="grade">Discount forgone</div><div class="achv">${status==='closed' ? inr(forgone) : '&mdash;'}</div><div class="figs">${status==='closed' ? 'missed in this closed period' : 'only for a closed period'}</div></div>
-    <div class="kpi"><div class="grade">Customers in a slab</div><div class="achv">${inSlab} / ${rows.length}</div><div class="figs">with slabs defined for this period</div></div>
-    <div class="kpi"><div class="grade">Volume to next slab</div><div class="achv">${status==='open' ? fmt(sum(needRows,'need')) : '&mdash;'}</div><div class="figs">${status==='open' ? 'MT across ' + needRows.length + ' customer(s)' : 'only for a running period'}</div></div>`;
+    <div class="kpi overall"><div class="grade">MOU discount earned</div><div class="achv">${inr(earned)}</div><div class="figs">${PTYPES[pt]} &middot; ${p.label}</div></div>
+    <div class="kpi"><div class="grade">Discount at risk</div><div class="achv">${st==='open' ? inr(atRisk) : '&mdash;'}</div><div class="figs">${st==='open' ? 'lost if minimum not reached' : 'running period only'}</div></div>
+    <div class="kpi"><div class="grade">Discount forgone</div><div class="achv">${st==='closed' ? inr(forgone) : '&mdash;'}</div><div class="figs">${st==='closed' ? 'minimum missed, not paid' : 'closed period only'}</div></div>
+    <div class="kpi"><div class="grade">Qualified</div><div class="achv">${qual} / ${elig.length}</div><div class="figs">MOU customers meeting the minimum</div></div>
+    <div class="kpi"><div class="grade">Volume to qualify</div><div class="achv">${st==='open' ? fmt(needTotal) : '&mdash;'}</div><div class="figs">${st==='open' ? 'MT still needed, all short customers' : 'running period only'}</div></div>`;
 
-  const periodPanels = Object.keys(PTYPES).map(t => {
-    const cp = periodOf(t, todayMK()), cr = computeRows(t, cp, ctx), dist = {};
-    cr.forEach(r => { const n = r.cur ? r.cur.name : 'No slab yet'; dist[n] = (dist[n]||0) + 1; });
-    const lines = Object.entries(dist).sort((a,b)=>b[1]-a[1]).map(([n,c]) => `<div class="dq-item"><span class="name">${n}</span><span class="tag">${c}</span></div>`).join('')
-      || '<div class="empty-note">No slabs defined.</div>';
+  const fy = fyTotals(ctx), fyLabel = periodOf('A', todayMK()).label;
+  const fyRows = Object.keys(PTYPES).map(t => `<tr><td>${PTYPES[t]}</td><td class="num">${inr(fy.byType[t].earned)}</td><td class="num">${inr(fy.byType[t].atRisk)}</td><td class="num">${inr(fy.byType[t].forgone)}</td></tr>`).join('');
+
+  const panels = Object.keys(PTYPES).map(t => {
+    const cp = periodOf(t, todayMK()), cr = computeMouRows(t, cp, ctx), el = cr.filter(r => r.eligible), q = el.filter(r => r.qualified).length;
     return `<div class="panel"><div class="eyebrow">${PTYPES[t]}</div><h3>${cp.label} <span class="pill warn">running</span></h3>
-      ${lines}
-      <div class="metric" style="margin-top:8px;"><span>Earned</span><b>${inr(sum(cr,'earned'))}</b></div>
+      <div class="count-note">${ruleText(t)}</div>
+      <div class="metric"><span>Qualified</span><b>${q} / ${el.length}</b></div>
+      <div class="metric"><span>Earned</span><b>${inr(sum(cr,'earned'))}</b></div>
       <div class="metric"><span>At risk</span><b>${inr(sum(cr,'atRisk'))}</b></div>
-      <div class="metric"><span>MT to next slab</span><b>${fmt(sum(cr.filter(r=>r.next),'need'))}</b></div></div>`;
+      <div class="metric"><span>MT to qualify</span><b>${fmt(sum(cr,'need'))}</b></div></div>`;
   }).join('');
 
-  const closest = needRows.filter(r => r.need > 0).sort((a,b) => a.need - b.need).slice(0,8);
+  const closest = rows.filter(r => r.short && st==='open').sort((a,b) => a.need - b.need).slice(0,8);
+  const closestHtml = st!=='open' ? '<div class="empty-note">Shown for running periods only.</div>'
+    : (closest.length ? closest.map(r => `<div class="dq-item"><span class="name">${r.name} <span class="tag">(${r.grade})</span></span><span class="tag">${fmt(r.need)} MT &middot; ${r.rate ? 'unlocks ' + inr(r.rate * Math.min(Math.max(r.vol, r.minQty), r.maxQty)) : 'no payout'}</span></div>`).join('')
+      : '<div class="empty-note">No customer is short of the minimum.</div>');
+
+  // DSCD quantity discount is monthly: use the selected month, or the latest month of a longer period.
+  const qdMk = pt==='M' ? p.start : Math.min(p.end, todayMK());
+  const qdRows = [];
+  ctx.forEach(c => {
+    const v = c.byMonth[qdMk] || 0; if(v <= 0) return;
+    const e = evalSlab(qdSlabsFor(c.grade), v);
+    qdRows.push({ name: c.name, grade: c.grade, vol: v, cur: e.cur, next: e.next, need: e.need, earned: e.earned, upside: e.uplift });
+  });
+  qdRows.sort((a,b) => b.earned - a.earned);
+  const qdHtml = qdRows.length ? qdRows.map(r => `<tr><td>${r.name}</td><td>${r.grade}</td><td class="num">${fmt(r.vol)}</td>
+      <td>${r.cur ? `<span class="pill good">${r.cur.name} &middot; ${RS}${r.cur.rate}</span>` : '<span class="pill neutral">below first slab</span>'}</td>
+      <td class="num">${inr(r.earned)}</td>
+      <td>${r.next ? `${r.next.name} <span class="tag">@ ${RS}${r.next.rate}</span>` : '<span class="tag">top slab</span>'}</td>
+      <td class="num">${r.next ? fmt(r.need) : '&mdash;'}</td>
+      <td class="num">${r.next ? inr(r.upside) : '&mdash;'}</td></tr>`).join('')
+    : `<tr><td colspan="8" class="empty-note">No dispatch recorded in ${monthLabelFromKey(qdMk)} for these filters.</td></tr>`;
 
   app.innerHTML = `
     <div class="view active">
-      <section><div class="eyebrow">Selected period</div><h2>${PTYPES[ptype]} &middot; ${p.label} ${statusPill}</h2>
+      <section><div class="eyebrow">Selected period</div><h2>RIL MOU discount &middot; ${PTYPES[pt]} &middot; ${p.label} ${statusPillHtml}</h2>
+        <div class="count-note">${ruleText(pt)}${noPayout ? ' &mdash; this component pays nothing under the scheme, so it is tracked for status only.' : ''}</div>
         <div class="kpi-row">${kpis}</div></section>
-      <section><div class="eyebrow">Slab status</div><h2>Current period, every cycle</h2>
-        <div class="period-row">${periodPanels}</div></section>
+
+      <section><div class="eyebrow">Financial year to date</div><h2>${fyLabel} &middot; all four MOU components</h2>
+        <div class="table-row">
+          <div class="panel"><div class="tbl-scroll"><table><thead><tr><th>Component</th><th style="text-align:right">Earned</th><th style="text-align:right">At risk</th><th style="text-align:right">Forgone</th></tr></thead><tbody>
+            ${fyRows}
+            <tr><td><b>Total</b></td><td class="num"><b>${inr(fy.earned)}</b></td><td class="num"><b>${inr(fy.atRisk)}</b></td><td class="num"><b>${inr(fy.forgone)}</b></td></tr>
+          </tbody></table></div></div>
+          <div class="panel">
+            <div class="metric"><span>DSCD quantity discount given (FY to date)</span><b>${inr(fy.qd)}</b></div>
+            <div class="metric"><span>Lifted with no MOU on file (MT)</span><b>${fmt(fy.noMouMT)}</b></div>
+            <div class="assume">Customers who lift without an MOU are not eligible for any RIL MOU discount on that volume. At risk and forgone are counted on volume actually lifted.</div>
+          </div>
+        </div></section>
+
+      <section><div class="eyebrow">Slab status</div><h2>Current period of every cycle</h2>
+        <div class="period-row">${panels}</div></section>
+
       <section><div class="chart-row">
-        <div class="panel"><h3>Discount by grade (${p.label})</h3><canvas id="discChart"></canvas></div>
-        <div class="panel"><h3>Closest to the next slab</h3>
-          ${status!=='open' ? '<div class="empty-note">Shown for running periods only.</div>' :
-            (closest.length ? closest.map(r => `<div class="dq-item"><span class="name">${r.name} <span class="tag">(${r.grade})</span></span><span class="tag">${fmt(r.need)} MT &middot; +${inr(Math.max(0, r.next.from*r.next.rate - r.earned))}</span></div>`).join('')
-              : '<div class="empty-note">Every customer is already at the top slab.</div>')}
-        </div>
+        <div class="panel"><h3>MOU discount by grade (${p.label})</h3><canvas id="discChart"></canvas></div>
+        <div class="panel"><h3>Closest to qualifying</h3>${closestHtml}</div>
       </div></section>
-      <section><div class="eyebrow">Detail</div><h2>Customer slab table</h2>
+
+      <section><div class="eyebrow">Detail</div><h2>Customer MOU status &middot; ${p.label}</h2>
         <div class="count-note" id="discCount"></div>
         <div class="panel"><div class="tbl-scroll"><table><thead><tr>
           <th class="sortable" onclick="sortDisc('name')">Customer</th>
           <th class="sortable" onclick="sortDisc('grade')">Grade</th>
-          <th class="sortable" onclick="sortDisc('vol')" style="text-align:right">Volume (MT)</th>
-          <th>Current slab</th><th>Next slab</th>
-          <th class="sortable" onclick="sortDisc('need')" style="text-align:right">MT to next</th>
+          <th class="sortable" onclick="sortDisc('annual')" style="text-align:right">Annual MOU</th>
+          <th class="sortable" onclick="sortDisc('minQty')" style="text-align:right">Minimum (MT)</th>
+          <th class="sortable" onclick="sortDisc('vol')" style="text-align:right">Lifted (MT)</th>
+          <th class="sortable" onclick="sortDisc('pct')" style="text-align:right">% of MOU</th>
+          <th>Status</th>
+          <th class="sortable" onclick="sortDisc('need')" style="text-align:right">MT to qualify</th>
           <th class="sortable" onclick="sortDisc('earned')" style="text-align:right">Earned</th>
           <th class="sortable" onclick="sortDisc('atRisk')" style="text-align:right">At risk</th>
           <th class="sortable" onclick="sortDisc('forgone')" style="text-align:right">Forgone</th>
-        </tr></thead><tbody id="discBody"></tbody></table></div></div>
-        <div class="assume"><b>How this is calculated.</b> Periods follow the April&ndash;March financial year. Volume is dispatch inside the period. Earned = period volume &times; the Rs/MT of the highest slab reached. At risk = extra discount the next slab would add (its minimum volume &times; its rate, less what is earned now) in a period that is still running. Forgone = the same shortfall once the period has closed. Customers with no slab rules for the chosen period are left out.</div>
+        </tr></thead><tbody id="discBody"></tbody></table></div></div></section>
+
+      <section><div class="eyebrow">DSCD scheme</div><h2>Quantity discount &middot; ${monthLabelFromKey(qdMk)}</h2>
+        <div class="count-note">Monthly slabs on total quantity lifted${pt!=='M' ? ' (latest month of the selected period shown)' : ''}. ${gradeF()==='PP' || gradeF()==='ALL' ? 'PP trade discount uses the sale type chosen in the PP SALE filter.' : ''}</div>
+        <div class="panel"><div class="tbl-scroll"><table><thead><tr>
+          <th>Customer</th><th>Grade</th><th style="text-align:right">Lifted (MT)</th><th>Current slab</th><th style="text-align:right">Discount</th><th>Next slab</th><th style="text-align:right">MT to next</th><th style="text-align:right">Extra if reached</th>
+        </tr></thead><tbody>${qdHtml}</tbody></table></div></div>
+        <div class="assume"><b>How this is calculated.</b> Periods follow the April&ndash;March financial year. A customer qualifies for a MOU component by lifting at least the minimum share of annual MOU quantity in that period. Discount = rate &times; volume lifted, capped at the maximum share, and paid only if the minimum is met. At risk = that discount on volume lifted so far in a running period that is still short of the minimum. Forgone = the same amount once the period has closed short. HDPE/LLDPE and LDPE customers with an annual MOU under 60 MT are not eligible. Cash discount, early-payment incentive, cut &amp; torn bag, depot, deemed-export and special RIL schemes are not included because the sheet holds no payment, billing or depot data.</div>
       </section>
     </div>`;
 
@@ -706,17 +775,20 @@ function renderDiscount(){
 function paintDiscTable(){
   const rows = window._discRows.slice(), { col, dir } = discSort;
   const keyOf = r => col==='risk' ? (r.atRisk + r.forgone) : r[col];
-  rows.sort((a,b) => { const av = keyOf(a), bv = keyOf(b); return (typeof av==='string' ? av.localeCompare(bv) : (av||0)-(bv||0)) * dir; });
-  document.getElementById('discCount').textContent = rows.length + ' customer(s) with slab rules';
+  rows.sort((a,b) => { const av = keyOf(a), bv = keyOf(b); return (typeof av==='string' ? av.localeCompare(bv) : ((av==null?-1:av) - (bv==null?-1:bv))) * dir; });
+  document.getElementById('discCount').textContent = rows.length + ' customer(s)';
   document.getElementById('discBody').innerHTML = rows.map(r => `
-    <tr><td>${r.name}</td><td>${r.grade}</td><td class="num">${fmt(r.vol)}</td>
-    <td>${r.cur ? `<span class="pill good">${r.cur.name}</span>` : '<span class="pill neutral">No slab</span>'}</td>
-    <td>${r.next ? `${r.next.name} <span class="tag">@ ${fmt(r.next.from)} MT</span>` : '<span class="tag">top slab</span>'}</td>
-    <td class="num">${r.next && r.status==='open' ? fmt(r.need) : '&mdash;'}</td>
-    <td class="num">${inr(r.earned)}</td>
+    <tr><td>${r.name}</td><td>${r.grade}</td>
+    <td class="num">${r.annual ? fmt(r.annual) : '&mdash;'}</td>
+    <td class="num">${r.eligible ? fmt(r.minQty) : '&mdash;'}</td>
+    <td class="num">${fmt(r.vol)}</td>
+    <td class="num">${r.pct===null ? '&mdash;' : r.pct.toFixed(1) + '%'}</td>
+    <td>${statusPill(r)}</td>
+    <td class="num">${r.need ? fmt(r.need) : '&mdash;'}</td>
+    <td class="num">${r.earned ? inr(r.earned) : '&mdash;'}</td>
     <td class="num">${r.atRisk ? `<span style="color:var(--amber)">${inr(r.atRisk)}</span>` : '&mdash;'}</td>
     <td class="num">${r.forgone ? `<span style="color:var(--red)">${inr(r.forgone)}</span>` : '&mdash;'}</td></tr>`).join('')
-    || '<tr><td colspan="9" class="empty-note">No customers match these filters.</td></tr>';
+    || '<tr><td colspan="11" class="empty-note">No customers match these filters.</td></tr>';
 }
 function sortDisc(col){ discSort.dir = (discSort.col===col) ? -discSort.dir : -1; discSort.col = col; paintDiscTable(); }
 
