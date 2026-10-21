@@ -610,8 +610,8 @@ function computeMouRows(pt, p, ctx){
       pct: c.annual > 0 ? vol / c.annual * 100 : null,
       need: short && st==='open' ? minQty - vol : 0,
       earned: qualified ? rule.rate * payVol : 0,
-      atRisk: short && st==='open' ? rule.rate * payVol : 0,
-      forgone: short && st==='closed' ? rule.rate * payVol : 0 });
+      atRisk: short && st==='open' ? rule.rate * minQty : 0,
+      forgone: short && st==='closed' ? rule.rate * minQty : 0 });
   });
   return rows;
 }
@@ -724,7 +724,7 @@ function renderDiscount(){
           <div class="panel">
             <div class="metric"><span>DSCD quantity discount given (FY to date)</span><b>${inr(fy.qd)}</b></div>
             <div class="metric"><span>Lifted with no MOU on file (MT)</span><b>${fmt(fy.noMouMT)}</b></div>
-            <div class="assume">Customers who lift without an MOU are not eligible for any RIL MOU discount on that volume. At risk and forgone are counted on volume actually lifted.</div>
+            <div class="assume">Customers who lift without an MOU are not eligible for any RIL MOU discount on that volume. At risk and forgone are counted at the minimum qualifying quantity, whatever was actually lifted.</div>
           </div>
         </div></section>
 
@@ -757,7 +757,7 @@ function renderDiscount(){
         <div class="panel"><div class="tbl-scroll"><table><thead><tr>
           <th>Customer</th><th>Grade</th><th style="text-align:right">Lifted (MT)</th><th>Current slab</th><th style="text-align:right">Discount</th><th>Next slab</th><th style="text-align:right">MT to next</th><th style="text-align:right">Extra if reached</th>
         </tr></thead><tbody>${qdHtml}</tbody></table></div></div>
-        <div class="assume"><b>How this is calculated.</b> Periods follow the April&ndash;March financial year. A customer qualifies for a MOU component by lifting at least the minimum share of annual MOU quantity in that period. Discount = rate &times; volume lifted, capped at the maximum share, and paid only if the minimum is met. At risk = that discount on volume lifted so far in a running period that is still short of the minimum. Forgone = the same amount once the period has closed short. HDPE/LLDPE and LDPE customers with an annual MOU under 60 MT are not eligible. Cash discount, early-payment incentive, cut &amp; torn bag, depot, deemed-export and special RIL schemes are not included because the sheet holds no payment, billing or depot data.</div>
+        <div class="assume"><b>How this is calculated.</b> Periods follow the April&ndash;March financial year. A customer qualifies for a MOU component by lifting at least the minimum share of annual MOU quantity in that period. Discount earned = rate &times; volume lifted, capped at the maximum share, paid only if the minimum is met. If the minimum is missed, the loss is counted at the minimum quantity (rate &times; minimum MT), whatever was actually lifted: At risk while the period is running, Forgone once it has closed. HDPE/LLDPE and LDPE customers with an annual MOU under 60 MT are not eligible. Cash discount, early-payment incentive, cut &amp; torn bag, depot, deemed-export and special RIL schemes are not included because the sheet holds no payment, billing or depot data.</div>
       </section>
     </div>`;
 
